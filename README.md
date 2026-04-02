@@ -1,2 +1,1 @@
-# image-background-remover
-Remove background from images
+# Image Background Remover
