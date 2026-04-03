@@ -27,22 +27,8 @@ jobs:
           NODE_ENV: production
 
       - name: Deploy to Cloudflare Pages
-        id: deploy
-        run: |
-          RESPONSE=$(curl -sS -X POST \
-            -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
-            -H "Content-Type: application/json" \
-            "https://api.cloudflare.com/client/v4/accounts/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/pages/projects/image-background-remover/deployments" \
-            -d '{
-              "branch": "main",
-              "buildConfig": {
-                "build_command": "npm run build",
-                "destination_dir": ".next"
-              },
-              "source": {
-                "type": "github"
-              }
-            }')
-          echo "response=$RESPONSE"
-          DEPLOYMENT_ID=$(echo "$RESPONSE" | jq -r '.result.id')
-          echo "deployment_id=$DEPLOYMENT_ID" >> $GITHUB_OUTPUT
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy .next --project-name=image-background-remover
