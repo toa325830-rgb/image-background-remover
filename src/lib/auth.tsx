@@ -46,7 +46,7 @@ const SESSION_KEY = "google_user_session";
 
 // IMPORTANT: Replace with your Google Sheet ID
 // Create a Google Sheet and put the ID here (from the URL: spreadsheets/d/YOUR_ID_HERE)
-const SPREADSHEET_ID = "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"; 
+const SPREADSHEET_ID = "1XpO3JDyL23WoSP4TzPWZ8pLMNvLDd3fGL6Na-Hys6Ws"; 
 const SHEETS_API_BASE = "https://sheets.googleapis.com/v4/spreadsheets";
 
 function decodeToken(token: string): User | null {
