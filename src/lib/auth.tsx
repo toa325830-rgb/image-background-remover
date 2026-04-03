@@ -7,11 +7,7 @@ interface User {
   name: string;
   email: string;
   picture: string;
-}
-
-interface SubscriptionPlan {
-  name: string;
-  monthlyLimit: number;
+  accessToken?: string;
 }
 
 interface UserCredits {
@@ -47,7 +43,11 @@ export function useAuth() {
 }
 
 const SESSION_KEY = "google_user_session";
-const API_BASE = "YOUR_GOOGLE_APPS_SCRIPT_WEB_APP_URL"; // Replace with your Apps Script URL
+
+// IMPORTANT: Replace with your Google Sheet ID
+// Create a Google Sheet and put the ID here (from the URL: spreadsheets/d/YOUR_ID_HERE)
+const SPREADSHEET_ID = "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"; 
+const SHEETS_API_BASE = "https://sheets.googleapis.com/v4/spreadsheets";
 
 function decodeToken(token: string): User | null {
   try {
@@ -64,31 +64,145 @@ function decodeToken(token: string): User | null {
   }
 }
 
-async function callAPI(action: string, data?: object): Promise<any> {
-  if (API_BASE === "YOUR_GOOGLE_APPS_SCRIPT_WEB_APP_URL") {
-    console.warn("API not configured yet");
-    return { success: false, error: "API not configured" };
+async function sheetsApiCall(range: string, accessToken: string, method: string = 'GET', body?: object) {
+  const url = `${SHEETS_API_BASE}/${SPREADSHEET_ID}/values/${range}`;
+  const options: RequestInit = {
+    method,
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+  };
+  if (body) {
+    options.body = JSON.stringify(body);
   }
   
+  const response = await fetch(url, options);
+  return response.json();
+}
+
+async function registerUserInSheet(user: User, accessToken: string): Promise<UserCredits> {
   try {
-    const url = new URL(API_BASE);
-    url.searchParams.set("action", action);
+    // Check if user exists
+    const result = await sheetsApiCall('Users!A:A', accessToken);
     
-    const options: RequestInit = {
-      method: data ? "POST" : "GET",
-      headers: { "Content-Type": "application/json" },
-    };
-    
-    if (data) {
-      options.body = JSON.stringify(data);
+    if (result.values) {
+      for (let i = 0; i < result.values.length; i++) {
+        if (result.values[i][0] === user.id) {
+          const row = result.values[i];
+          const freeCreditsUsed = parseInt(row[4]) || 0;
+          const hasSubscription = row[5] === 'TRUE';
+          const plan = row[6] || 'free';
+          const totalCredits = hasSubscription ? getPlanLimit(plan) : 3;
+          
+          return {
+            totalCredits,
+            usedCredits: freeCreditsUsed,
+            remainingCredits: Math.max(0, totalCredits - freeCreditsUsed),
+            hasSubscription,
+            plan
+          };
+        }
+      }
     }
     
-    const response = await fetch(url.toString(), options);
-    return await response.json();
+    // New user - append row
+    const now = new Date().toISOString();
+    const newRow = [[user.id, user.name, user.email, user.picture, '0', 'FALSE', '', now]];
+    
+    await sheetsApiCall('Users!A1', accessToken, 'POST', { values: newRow });
+    
+    return {
+      totalCredits: 3,
+      usedCredits: 0,
+      remainingCredits: 3,
+      hasSubscription: false,
+      plan: 'free'
+    };
   } catch (error) {
-    console.error("API call failed:", error);
-    return { success: false, error: String(error) };
+    console.error('Sheets API error:', error);
+    // Return default credits if API fails
+    return {
+      totalCredits: 3,
+      usedCredits: 0,
+      remainingCredits: 3,
+      hasSubscription: false,
+      plan: 'free'
+    };
   }
+}
+
+async function deductCreditInSheet(userId: string, accessToken: string): Promise<{ success: boolean; remaining: number }> {
+  try {
+    const result = await sheetsApiCall('Users!A:A', accessToken);
+    
+    if (!result.values) return { success: false, remaining: 0 };
+    
+    for (let i = 0; i < result.values.length; i++) {
+      if (result.values[i][0] === userId) {
+        const rowNum = i + 2;
+        const freeCreditsUsed = parseInt(result.values[i][4]) || 0;
+        const hasSubscription = result.values[i][5] === 'TRUE';
+        const plan = result.values[i][6] || 'free';
+        const totalCredits = hasSubscription ? getPlanLimit(plan) : 3;
+        
+        if (freeCreditsUsed >= totalCredits) {
+          return { success: false, remaining: 0 };
+        }
+        
+        await sheetsApiCall(`Users!E${rowNum}:E${rowNum}`, accessToken, 'PUT', {
+          values: [[String(freeCreditsUsed + 1)]]
+        });
+        
+        return { success: true, remaining: totalCredits - freeCreditsUsed - 1 };
+      }
+    }
+    
+    return { success: false, remaining: 0 };
+  } catch (error) {
+    console.error('Deduct credit error:', error);
+    return { success: false, remaining: 0 };
+  }
+}
+
+async function getUserCreditsFromSheet(userId: string, accessToken: string): Promise<UserCredits | null> {
+  try {
+    const result = await sheetsApiCall('Users!A:A', accessToken);
+    
+    if (!result.values) return null;
+    
+    for (let i = 0; i < result.values.length; i++) {
+      if (result.values[i][0] === userId) {
+        const row = result.values[i];
+        const freeCreditsUsed = parseInt(row[4]) || 0;
+        const hasSubscription = row[5] === 'TRUE';
+        const plan = row[6] || 'free';
+        const totalCredits = hasSubscription ? getPlanLimit(plan) : 3;
+        
+        return {
+          totalCredits,
+          usedCredits: freeCreditsUsed,
+          remainingCredits: Math.max(0, totalCredits - freeCreditsUsed),
+          hasSubscription,
+          plan
+        };
+      }
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Get credits error:', error);
+    return null;
+  }
+}
+
+function getPlanLimit(plan: string): number {
+  const limits: Record<string, number> = {
+    'personal': 100,
+    'pro': 300,
+    'team': 500
+  };
+  return limits[plan] || 3;
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -100,18 +214,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return new Promise<void>((resolve) => {
       if (typeof window === "undefined") return resolve();
       
-      // Check session
       const stored = sessionStorage.getItem(SESSION_KEY);
       if (stored) {
         try {
           const parsed = JSON.parse(stored);
           if (parsed && parsed.expires > Date.now()) {
             setUser(parsed.user);
-            // Fetch credits
-            callAPI("getStats", { userId: parsed.user.id })
-              .then(result => {
-                if (result.success) setCredits(result.stats);
-              });
           } else {
             sessionStorage.removeItem(SESSION_KEY);
           }
@@ -120,44 +228,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      // Load Google Identity Services
       if (!document.getElementById("google-identity-services")) {
         const script = document.createElement("script");
         script.id = "google-identity-services";
         script.src = "https://accounts.google.com/gsi/client";
         script.async = true;
         script.defer = true;
-        script.onload = () => {
-          const params = new URLSearchParams(window.location.search);
-          const credential = params.get("credential");
-          if (credential) {
-            const userData = decodeToken(credential);
-            if (userData) {
-              sessionStorage.setItem(
-                SESSION_KEY,
-                JSON.stringify({ user: userData, expires: Date.now() + 3600 * 1000 })
-              );
-              window.history.replaceState({}, "", window.location.pathname);
-              setUser(userData);
-              // Register user and get credits
-              callAPI("register", userData).then(result => {
-                if (result.success && result.user) {
-                  const creditsData: UserCredits = {
-                    totalCredits: result.user.hasSubscription ? getPlanLimit(result.user.subscriptionPlan) : 3,
-                    usedCredits: result.user.freeCreditsUsed,
-                    remainingCredits: result.user.hasSubscription 
-                      ? Math.max(0, getPlanLimit(result.user.subscriptionPlan) - result.user.freeCreditsUsed)
-                      : Math.max(0, 3 - result.user.freeCreditsUsed),
-                    hasSubscription: result.user.hasSubscription,
-                    plan: result.user.subscriptionPlan || 'free'
-                  };
-                  setCredits(creditsData);
-                }
-              });
-            }
-          }
-          resolve();
-        };
+        script.onload = () => resolve();
         document.head.appendChild(script);
       } else {
         resolve();
@@ -166,21 +243,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const refreshCredits = useCallback(async () => {
-    if (!user) return;
-    const result = await callAPI("getStats", { userId: user.id });
-    if (result.success) {
-      setCredits(result.stats);
-    }
+    if (!user?.accessToken) return;
+    const creds = await getUserCreditsFromSheet(user.id, user.accessToken);
+    if (creds) setCredits(creds);
   }, [user]);
 
   const deductCredit = useCallback(async (): Promise<boolean> => {
-    if (!user) return false;
-    const result = await callAPI("deductCredit", { userId: user.id });
+    if (!user?.accessToken) return false;
+    const result = await deductCreditInSheet(user.id, user.accessToken);
     if (result.success) {
       setCredits(prev => prev ? {
         ...prev,
         usedCredits: prev.usedCredits + 1,
-        remainingCredits: Math.max(0, prev.remainingCredits - 1)
+        remainingCredits: result.remaining
       } : null);
       return true;
     }
@@ -198,28 +273,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return new Promise<void>((resolve, reject) => {
       google.accounts.id.initialize({
         client_id: "183586128219-sl1fs3heq92fvrafqkhaav0bqe6loa0e.apps.googleusercontent.com",
+        scope: 'email profile https://www.googleapis.com/auth/spreadsheets',
         callback: async (response: any) => {
           const userData = decodeToken(response.credential);
           if (userData) {
+            const accessToken = response.access_token;
+            userData.accessToken = accessToken;
+            
             sessionStorage.setItem(
               SESSION_KEY,
               JSON.stringify({ user: userData, expires: Date.now() + 3600 * 1000 })
             );
             setUser(userData);
             
-            // Register or get user
-            const result = await callAPI("register", userData);
-            if (result.success && result.user) {
-              const creditsData: UserCredits = {
-                totalCredits: result.user.hasSubscription ? getPlanLimit(result.user.subscriptionPlan) : 3,
-                usedCredits: result.user.freeCreditsUsed,
-                remainingCredits: result.user.hasSubscription 
-                  ? Math.max(0, getPlanLimit(result.user.subscriptionPlan) - result.user.freeCreditsUsed)
-                  : Math.max(0, 3 - result.user.freeCreditsUsed),
-                hasSubscription: result.user.hasSubscription,
-                plan: result.user.subscriptionPlan || 'free'
-              };
-              setCredits(creditsData);
+            if (accessToken) {
+              const creds = await registerUserInSheet(userData, accessToken);
+              setCredits(creds);
             }
             resolve();
           } else {
@@ -251,13 +320,4 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       {children}
     </AuthContext.Provider>
   );
-}
-
-function getPlanLimit(plan: string): number {
-  const limits: Record<string, number> = {
-    'personal': 100,
-    'pro': 300,
-    'team': 500
-  };
-  return limits[plan] || 0;
 }
