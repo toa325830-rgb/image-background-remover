@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { AuthProvider } from "@/lib/auth";
+import PayPalProvider from "@/components/paypal/PayPalProvider";
 
 export const metadata: Metadata = {
   title: "Image Background Remover",
@@ -18,7 +19,9 @@ export default function RootLayout({
         <meta name="google-adsbot" content="noindex" />
       </head>
       <body className="min-h-full flex flex-col">
-        <AuthProvider>{children}</AuthProvider>
+        <AuthProvider>
+          <PayPalProvider>{children}</PayPalProvider>
+        </AuthProvider>
       </body>
     </html>
   );
