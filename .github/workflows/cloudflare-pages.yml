@@ -21,6 +21,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Configure Next.js for static export
+        run: |
+          cat > next.config.ts << 'EOF'
+          import type { NextConfig } from "next";
+          const nextConfig: NextConfig = {
+            output: "export",
+            images: { unoptimized: true },
+          };
+          export default nextConfig;
+          EOF
+
       - name: Build
         run: npm run build
         env:
@@ -31,4 +42,4 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy .next --project-name=image-background-remover
+          command: pages deploy out --project-name=image-background-remover
