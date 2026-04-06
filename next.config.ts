@@ -1,7 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // For Cloudflare Pages - enables SSR/API routes
+  // Do NOT use output: "export"
 };
 
 export default nextConfig;

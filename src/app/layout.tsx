@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { AuthProvider } from "@/lib/auth";
+import PayPalProvider from "@/components/paypal/PayPalProvider";
 import Link from "next/link";
 
 export const metadata: Metadata = {
@@ -38,9 +40,16 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="h-full antialiased">
+      <head>
+        <meta name="google-adsbot" content="noindex" />
+      </head>
       <body className="min-h-full flex flex-col">
-        <Header />
-        <main className="flex-1">{children}</main>
+        <AuthProvider>
+          <PayPalProvider>
+            <Header />
+            <main className="flex-1">{children}</main>
+          </PayPalProvider>
+        </AuthProvider>
       </body>
     </html>
   );
